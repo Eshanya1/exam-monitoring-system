@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Real-Time AI Examination Monitoring — Live Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {
+    --accent: #f472b6; --accent2: #38bdf8; --bg: #0a0e14; --panel: #12161f; --panel2: #171c28;
+    --border: #262c3a; --text: #d5dae3; --muted: #7f8aa3; --green: #3fb950; --amber: #e3b341; --red: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: radial-gradient(1200px 500px at 15% -10%, rgba(244,114,182,0.08), transparent),
+                radial-gradient(900px 500px at 100% 0%, rgba(56,189,248,0.07), transparent), var(--bg);
+    color: var(--text); line-height: 1.5; min-height: 100vh;
+  }
+  header { padding: 32px 24px 22px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0 0 8px; font-size: 22px; color: #fff; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; max-width: 780px; }
+  header a { color: var(--accent2); text-decoration: none; } header a:hover { text-decoration: underline; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 10px; border-radius: 20px;
+    background: rgba(63,185,80,0.12); color: var(--green); border: 1px solid rgba(63,185,80,0.35); margin-left: 10px; font-weight: 600; }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  main { max-width: 1050px; margin: 0 auto; padding: 24px; }
+  .grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+
+  .video-wrap { position: relative; background: #000; border-radius: 14px; overflow: hidden; border: 1px solid var(--border); aspect-ratio: 4/3; }
+  video, canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  video { object-fit: cover; transform: scaleX(-1); }
+  canvas.overlay { transform: scaleX(-1); pointer-events: none; }
+
+  .video-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); text-align: center; padding: 30px; }
+  .video-placeholder button { padding: 13px 24px; font-size: 14px; font-weight: 700; border-radius: 10px; border: none; background: var(--accent); color: #fff; cursor: pointer; }
+  .video-placeholder button:hover { background: #f792c6; }
+
+  .status-strip { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .status-chip { font-size: 11px; padding: 5px 11px; border-radius: 20px; background: var(--panel); border: 1px solid var(--border); color: var(--muted); font-weight: 600; }
+  .status-chip.ok { color: var(--green); border-color: rgba(63,185,80,0.4); background: rgba(63,185,80,0.08); }
+  .status-chip.warn { color: var(--amber); border-color: rgba(227,179,65,0.4); background: rgba(227,179,65,0.08); }
+  .status-chip.bad { color: var(--red); border-color: rgba(248,81,73,0.4); background: rgba(248,81,73,0.08); }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 14px; }
+  .panel h2 { margin: 0 0 12px; font-size: 12px; color: #fff; text-transform: uppercase; letter-spacing: .05em; }
+  .metric-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .metric-row:last-child { border-bottom: none; }
+  .metric-row .lbl { color: var(--muted); }
+  .metric-row .val { font-family: ui-monospace, monospace; color: #fff; font-weight: 600; }
+
+  button.ghost { width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 10px; border-radius: 8px; font-size: 13px; cursor: pointer; margin-top: 6px; }
+  button.ghost:hover { border-color: var(--accent2); }
+  button.ghost:disabled { opacity: .4; cursor: not-allowed; }
+
+  .anomaly-log { max-height: 160px; overflow-y: auto; font-size: 12px; }
+  .anomaly-item { padding: 6px 0; border-bottom: 1px solid var(--border); color: var(--muted); display: flex; justify-content: space-between; }
+  .anomaly-item b { color: var(--amber); font-weight: 600; }
+  .anomaly-item.identity b { color: var(--red); }
+  .empty-log { color: var(--muted); font-size: 12px; padding: 8px 0; }
+
+  footer { text-align: center; padding: 36px 20px 30px; color: var(--muted); font-size: 12px; }
+  footer a { color: var(--accent2); }
+  .privacy-note { font-size: 11px; color: var(--muted); margin-top: 10px; padding: 10px 12px; background: var(--panel2); border-radius: 8px; border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Real-Time AI Examination Monitoring <span class="badge"><span class="dot"></span>Live — real MediaPipe inference</span></h1>
+  <p>
+    Uses Google's actual MediaPipe FaceLandmarker running live in your browser (the same production library the original
+    <a href="https://github.com/Eshanya1/exam-monitoring-system" target="_blank">Python project</a> is built on) for real
+    face detection and 3D head-pose estimation, plus the same intensity-histogram identity check from
+    <code>vision.py</code>. All processing happens locally on your device — nothing is uploaded anywhere.
+  </p>
+</header>
+
+<main>
+  <div class="grid">
+    <div>
+      <div class="video-wrap" id="videoWrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas class="overlay" id="overlay"></canvas>
+        <div class="video-placeholder" id="placeholder">
+          <div>This demo needs webcam access to run real face-detection inference locally in your browser.</div>
+          <button onclick="startCamera()">Enable Camera</button>
+        </div>
+      </div>
+      <div class="status-strip" id="statusStrip"></div>
+      <div class="privacy-note">🔒 Video never leaves your device — MediaPipe inference runs entirely client-side. Nothing is recorded, stored, or transmitted.</div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Live Metrics</h2>
+        <div class="metric-row"><span class="lbl">Faces detected</span><span class="val" id="m-faces">—</span></div>
+        <div class="metric-row"><span class="lbl">Head-pose deviation</span><span class="val" id="m-pose">—</span></div>
+        <div class="metric-row"><span class="lbl">Identity match</span><span class="val" id="m-identity">—</span></div>
+        <div class="metric-row"><span class="lbl">Inference latency</span><span class="val" id="m-latency">—</span></div>
+        <button class="ghost" id="registerBtn" onclick="registerReference()" disabled>Register reference face</button>
+      </div>
+
+      <div class="panel">
+        <h2>Pose Deviation Threshold</h2>
+        <input type="range" id="thresholdSlider" min="5" max="45" value="20" style="width:100%;accent-color:var(--accent);" oninput="document.getElementById('thresholdVal').textContent=this.value+'°'">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:6px;">
+          <span>strict</span><b id="thresholdVal" style="color:#fff;">20°</b><span>lenient</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Anomaly Log</h2>
+        <div class="anomaly-log" id="anomalyLog"><div class="empty-log">No anomalies yet.</div></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Full source, tests, and pose-calibration validation on
+  <a href="https://github.com/Eshanya1/exam-monitoring-system" target="_blank">GitHub</a>.
+  Identity check uses the same lightweight histogram signature documented there as a stand-in for a production face-embedding model.
+</footer>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+let faceLandmarker;
+let running = false;
+let referenceHistogram = null;
+let lastFaceBox = null;
+const anomalyLog = [];
+
+async function initLandmarker() {
+  const filesetResolver = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate: "GPU",
+    },
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: true,
+    runningMode: "VIDEO",
+    numFaces: 2,
+  });
+}
+
+window.startCamera = async function() {
+  const placeholder = document.getElementById('placeholder');
+  placeholder.innerHTML = '<div>Loading MediaPipe model…</div>';
+  try {
+    await initLandmarker();
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+    const video = document.getElementById('video');
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    video.play();
+    placeholder.style.display = 'none';
+    document.getElementById('registerBtn').disabled = false;
+    running = true;
+    requestAnimationFrame(loop);
+  } catch (err) {
+    placeholder.innerHTML = `<div>Camera or model failed to load: ${err.message}. This demo requires camera permission and a browser with WebGL support.</div><button onclick="startCamera()">Retry</button>`;
+  }
+}
+
+function setStatus(chips) {
+  document.getElementById('statusStrip').innerHTML = chips.map(c => `<span class="status-chip ${c.cls}">${c.text}</span>`).join('');
+}
+
+function logAnomaly(type, detail) {
+  const now = new Date().toLocaleTimeString();
+  anomalyLog.unshift({ type, detail, time: now });
+  if (anomalyLog.length > 30) anomalyLog.pop();
+  const el = document.getElementById('anomalyLog');
+  el.innerHTML = anomalyLog.map(a => `<div class="anomaly-item ${a.type==='identity_mismatch'?'identity':''}"><span><b>${a.type}</b> ${a.detail||''}</span><span>${a.time}</span></div>`).join('');
+}
+
+// ---- Identity histogram: mirrors vision.py's _face_signature / compare_signatures ----
+function computeHistogram(imageData) {
+  const bins = new Array(32).fill(0);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
+    const bin = Math.min(31, Math.floor(gray / 8));
+    bins[bin]++;
+  }
+  const sum = bins.reduce((a,b)=>a+b, 0) || 1;
+  return bins.map(b => b / sum);
+}
+function correlHist(a, b) {
+  const meanA = a.reduce((s,v)=>s+v,0)/a.length, meanB = b.reduce((s,v)=>s+v,0)/b.length;
+  let num=0, denA=0, denB=0;
+  for (let i=0;i<a.length;i++) { const da=a[i]-meanA, db=b[i]-meanB; num+=da*db; denA+=da*da; denB+=db*db; }
+  const den = Math.sqrt(denA*denB);
+  return den === 0 ? 0 : num/den;
+}
+
+window.registerReference = function() {
+  if (!lastFaceBox) { alert('No face detected yet — position your face in frame first.'); return; }
+  const video = document.getElementById('video');
+  const c = document.createElement('canvas');
+  c.width = lastFaceBox.w; c.height = lastFaceBox.h;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(video, lastFaceBox.x, lastFaceBox.y, lastFaceBox.w, lastFaceBox.h, 0, 0, lastFaceBox.w, lastFaceBox.h);
+  referenceHistogram = computeHistogram(ctx.getImageData(0, 0, c.width, c.height));
+  document.getElementById('registerBtn').textContent = 'Reference registered ✓ (click to re-register)';
+}
+
+function drawLandmarks(ctx, landmarks, w, h) {
+  ctx.fillStyle = 'rgba(56,189,248,0.85)';
+  landmarks.forEach(p => { ctx.beginPath(); ctx.arc(p.x*w, p.y*h, 1.1, 0, 7); ctx.fill(); });
+}
+
+function matrixToEulerDeg(m) {
+  // m is a 4x4 column-major transformation matrix from MediaPipe; extract rotation part.
+  const r00=m[0], r10=m[1], r20=m[2];
+  const r01=m[4], r11=m[5], r21=m[6];
+  const r02=m[8], r12=m[9], r22=m[10];
+  const sy = Math.sqrt(r00*r00 + r10*r10);
+  const singular = sy < 1e-6;
+  let x, y, z;
+  if (!singular) { x = Math.atan2(r21, r22); y = Math.atan2(-r20, sy); z = Math.atan2(r10, r00); }
+  else { x = Math.atan2(-r12, r11); y = Math.atan2(-r20, sy); z = 0; }
+  return { pitch: x*180/Math.PI, yaw: y*180/Math.PI, roll: z*180/Math.PI };
+}
+
+let lastTime = -1;
+async function loop() {
+  if (!running) return;
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  overlay.width = video.videoWidth; overlay.height = video.videoHeight;
+  const ctx = overlay.getContext('2d');
+  ctx.clearRect(0,0,overlay.width, overlay.height);
+
+  if (video.currentTime !== lastTime && video.videoWidth > 0) {
+    lastTime = video.currentTime;
+    const t0 = performance.now();
+    const result = faceLandmarker.detectForVideo(video, performance.now());
+    const latency = (performance.now() - t0).toFixed(1);
+    document.getElementById('m-latency').textContent = latency + 'ms';
+
+    const anomalies = [];
+    const numFaces = result.faceLandmarks.length;
+    document.getElementById('m-faces').textContent = numFaces;
+
+    if (numFaces === 0) {
+      anomalies.push('no_face_detected');
+      document.getElementById('m-pose').textContent = '—';
+      document.getElementById('m-identity').textContent = '—';
+      setStatus([{cls:'bad', text:'⬤ No face detected'}]);
+    } else {
+      if (numFaces > 1) anomalies.push('multiple_faces_detected');
+      const lm = result.faceLandmarks[0];
+      drawLandmarks(ctx, lm, overlay.width, overlay.height);
+
+      let minX=1,minY=1,maxX=0,maxY=0;
+      lm.forEach(p => { minX=Math.min(minX,p.x); minY=Math.min(minY,p.y); maxX=Math.max(maxX,p.x); maxY=Math.max(maxY,p.y); });
+      lastFaceBox = { x: minX*video.videoWidth, y: minY*video.videoHeight, w: (maxX-minX)*video.videoWidth, h: (maxY-minY)*video.videoHeight };
+
+      const chips = [{cls:'ok', text:`⬤ ${numFaces} face${numFaces>1?'s':''} tracked`}];
+      if (result.facialTransformationMatrixes && result.facialTransformationMatrixes.length) {
+        const euler = matrixToEulerDeg(result.facialTransformationMatrixes[0].data);
+        const magnitude = Math.sqrt(euler.pitch**2 + euler.yaw**2 + euler.roll**2);
+        document.getElementById('m-pose').textContent = magnitude.toFixed(1) + '°';
+        const threshold = parseFloat(document.getElementById('thresholdSlider').value);
+        if (magnitude > threshold) { anomalies.push('head_pose_deviation'); chips.push({cls:'warn', text:`⬤ Looking away (${magnitude.toFixed(0)}°)`}); }
+        else { chips.push({cls:'ok', text:'⬤ Facing forward'}); }
+      } else {
+        document.getElementById('m-pose').textContent = 'n/a';
+      }
+
+      if (referenceHistogram) {
+        const c = document.createElement('canvas');
+        c.width = Math.max(1,Math.round(lastFaceBox.w)); c.height = Math.max(1,Math.round(lastFaceBox.h));
+        const cctx = c.getContext('2d');
+        cctx.drawImage(video, lastFaceBox.x, lastFaceBox.y, lastFaceBox.w, lastFaceBox.h, 0, 0, c.width, c.height);
+        const hist = computeHistogram(cctx.getImageData(0,0,c.width,c.height));
+        const corr = correlHist(referenceHistogram, hist);
+        document.getElementById('m-identity').textContent = corr.toFixed(3);
+        if (corr < 0.5) { anomalies.push('identity_mismatch'); chips.push({cls:'bad', text:'⬤ Identity mismatch'}); }
+        else { chips.push({cls:'ok', text:'⬤ Identity verified'}); }
+      } else {
+        document.getElementById('m-identity').textContent = 'not registered';
+      }
+      setStatus(chips);
+    }
+    if (anomalies.length) anomalies.forEach(a => logAnomaly(a));
+  }
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
