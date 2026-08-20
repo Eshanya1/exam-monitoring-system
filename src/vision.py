@@ -26,7 +26,17 @@ import cv2
 import numpy as np
 import mediapipe as mp
 
-FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+_BUNDLED_CASCADE = Path(__file__).parent / "haarcascade_frontalface_default.xml"
+_PIP_CASCADE = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+_CASCADE_PATH = _BUNDLED_CASCADE if _BUNDLED_CASCADE.exists() else _PIP_CASCADE
+FACE_CASCADE = cv2.CascadeClassifier(str(_CASCADE_PATH))
+if FACE_CASCADE.empty():
+    raise RuntimeError(
+        f"Haar cascade failed to load from {_CASCADE_PATH} -- some opencv-python-headless "
+        "builds ship without bundled cascade data (confirmed on 5.0.0.93). The cascade is "
+        "bundled directly in this repo at src/haarcascade_frontalface_default.xml specifically "
+        "to avoid depending on the pip package's data files."
+    )
 
 _mp_face_mesh = mp.solutions.face_mesh
 _FACE_MESH = _mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
@@ -69,17 +79,12 @@ def register_reference(image_bgr: np.ndarray) -> Optional[np.ndarray]:
     return _face_signature(gray[y:y + h, x:x + w])
 
 
-def _estimate_head_pose_deviation(image_bgr: np.ndarray) -> Optional[float]:
-    h, w = image_bgr.shape[:2]
-    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    result = _FACE_MESH.process(rgb)
-    if not result.multi_face_landmarks:
-        return None
-
-    landmarks = result.multi_face_landmarks[0].landmark
-    image_points = np.array([(landmarks[i].x * w, landmarks[i].y * h) for i in _IDX], dtype=np.float64)
-
-    cam_matrix = np.array([[w, 0, w / 2], [0, w, h / 2], [0, 0, 1]], dtype=np.float64)
+def pose_deviation_from_image_points(image_points: np.ndarray, cam_matrix: np.ndarray) -> Optional[float]:
+    """Core pose-estimation math, factored out from image/landmark extraction so it can be
+    validated with synthetic (known-rotation) points independent of MediaPipe or a real photo.
+    This is the exact function production code calls -- see _estimate_head_pose_deviation below
+    and scripts/validate_pose_synthetic.py, which feeds this the same way with known ground truth.
+    """
     ok, rvec, _ = cv2.solvePnP(
         _MODEL_POINTS, image_points, cam_matrix, np.zeros((4, 1)), flags=cv2.SOLVEPNP_SQPNP
     )
@@ -90,6 +95,19 @@ def _estimate_head_pose_deviation(image_bgr: np.ndarray) -> Optional[float]:
     R_corrected = _R_FIX @ R
     rvec_corrected, _ = cv2.Rodrigues(R_corrected)
     return float(np.degrees(np.linalg.norm(rvec_corrected)))
+
+
+def _estimate_head_pose_deviation(image_bgr: np.ndarray) -> Optional[float]:
+    h, w = image_bgr.shape[:2]
+    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    result = _FACE_MESH.process(rgb)
+    if not result.multi_face_landmarks:
+        return None
+
+    landmarks = result.multi_face_landmarks[0].landmark
+    image_points = np.array([(landmarks[i].x * w, landmarks[i].y * h) for i in _IDX], dtype=np.float64)
+    cam_matrix = np.array([[w, 0, w / 2], [0, w, h / 2], [0, 0, 1]], dtype=np.float64)
+    return pose_deviation_from_image_points(image_points, cam_matrix)
 
 
 def analyze_frame(

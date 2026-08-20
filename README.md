@@ -28,15 +28,28 @@ Webcam frame ──▶ /sessions/{id}/analyze ──▶ vision.py         │
   rotation matrix is unreliable for this landmark set (axis coupling for
   near-frontal poses — confirmed across 3 different PnP solvers). Fixed with
   a calibration step (`pose_calibration.py`) and validated the **corrected
-  rotation magnitude** against synthetic ground truth:
+  rotation magnitude** against synthetic ground truth — reproducible with
+  `python scripts/validate_pose_synthetic.py` (also covered by
+  `tests/test_pose_synthetic.py`), which projects the same 3D model the
+  production code uses at a precisely known rotation and measures recovery
+  error, both noise-free (validates the math) and under injected landmark
+  jitter (validates real-world-relevant sensitivity):
 
-  | Applied rotation | Measured deviation |
-  |---|---|
-  | 0°  | 0.0° |
-  | 5°  | 4.9° |
-  | 10° | 10.2° |
-  | 20° | 19.6° |
-  | 30° | 31.0° |
+  | Applied rotation | Noise-free error | Mean error, σ=1.5px landmark noise | Worst case (200 trials) |
+  |---|---|---|---|
+  | 0°  | 0.00° | 0.92° | 2.60° |
+  | 5°  | 0.00° | 0.48° | 2.07° |
+  | 10° | 0.00° | 0.44° | 2.28° |
+  | 20° | 0.00° | 0.46° | 2.46° |
+  | 30° | 0.00° | 0.42° | 2.37° |
+
+  (averaged across yaw/pitch/roll axes; full per-axis breakdown in the
+  script's output). Mean error across all 3,000 trials: **0.54°**. Worst
+  single-trial error: **2.60°**. The noise-free row proves the solvePnP +
+  calibration math is exact; the noisy rows are a sensitivity analysis under
+  a stated, not measured, pixel-jitter assumption — real MediaPipe
+  localization error wasn't independently characterized against ground
+  truth (would need real annotated photos, not synthetic ones).
 
   Known limitation, found during testing: the Haar cascade face detector
   loses the face entirely past ~20° rotation — a real constraint of that
@@ -47,9 +60,12 @@ Webcam frame ──▶ /sessions/{id}/analyze ──▶ vision.py         │
   session-mutating endpoints require a valid bearer token.
 - **Persistence**: SQLite (WAL mode) — anomaly history and session state
   survive a process restart, unlike an in-memory dict.
-- **Tests**: 11 passing pytest cases covering vision logic (face detection,
-  identity matching, pose deviation, the documented rotation-limit edge
-  case), JWT issuance/expiry/tamper-rejection, and SQLite persistence.
+- **Tests**: 19 passing pytest cases (up from an earlier, non-reproducible
+  count — 4 tests that need a real face photo now skip cleanly on a fresh
+  clone instead of erroring; see `tests/fixtures/README.md`) covering pose
+  math (synthetic, no photo needed), signature-comparison math (synthetic),
+  face detection, JWT issuance/expiry/tamper-rejection, and SQLite
+  persistence.
 
 **Explicitly not production-grade (by design, for portfolio scope):**
 - Identity verification uses a lightweight intensity-histogram signature,
@@ -83,6 +99,8 @@ docker run -p 5000:5000 -e JWT_SECRET=your-secret exam-monitor
 ```
 
 ## Try it
+Needs any real face photo of your own as `face.jpg` in your working directory
+(not included in the repo — see `tests/fixtures/README.md` for why).
 ```bash
 TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
   -d '{"proctor_id":"proctor_1"}' http://localhost:5000/auth/login \
@@ -100,7 +118,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:5000/sessions/demo1/summ
 ## Tests
 ```bash
 pip install -r requirements.txt
-pytest tests/ -v      # 11 tests, all passing
+pytest tests/ -v      # 19 passing, 4 skipped (need a local face photo -- see tests/fixtures/README.md)
 ```
 
 ## Tech Stack
